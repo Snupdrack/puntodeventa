@@ -1,0 +1,337 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// SYNKDATA-VENTAS - Complete POS/ERP Schema
+// ============================================
+
+// ---- AUTH & ROLES ----
+enum Role {
+  ADMIN_GENERAL
+  GERENTE
+  CAJERO
+  VENDEDOR
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String
+  avatar    String?
+  role      Role     @default(CAJERO)
+  branchId  String?
+  branch    Branch?  @relation(fields: [branchId], references: [id])
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sales       Sale[]
+  auditLogs   AuditLog[]
+  expenses    Expense[]
+}
+
+// ---- BRANCHES ----
+model Branch {
+  id        String   @id @default(cuid())
+  name      String
+  code      String   @unique
+  address   String?
+  phone     String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users     User[]
+  inventory Inventory[]
+  sales     Sale[]
+  expenses  Expense[]
+}
+
+// ---- PRODUCTS & CATEGORIES ----
+model Category {
+  id       String     @id @default(cuid())
+  name     String
+  icon     String?
+  color    String?
+  parentId String?
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryTree")
+  products Product[]
+  active   Boolean    @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  sku         String   @unique
+  barcode     String?
+  name        String
+  description String?
+  categoryId  String
+  category    Category @relation(fields: [categoryId], references: [id])
+  costPrice   Float
+  salePrice   Float
+  unit        String   @default("pieza")
+  trackStock  Boolean  @default(true)
+  active      Boolean  @default(true)
+  imageUrl    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  inventory  Inventory[]
+  saleItems  SaleItem[]
+}
+
+// ---- INVENTORY ----
+enum AdjustmentType {
+  IN
+  OUT
+  TRANSFER
+}
+
+model Inventory {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
+  branchId  String
+  branch    Branch   @relation(fields: [branchId], references: [id])
+  quantity  Int      @default(0)
+  minStock  Int      @default(5)
+  updatedAt DateTime @updatedAt
+
+  adjustments InventoryAdjustment[]
+
+  @@unique([productId, branchId])
+}
+
+model InventoryAdjustment {
+  id          String         @id @default(cuid())
+  inventoryId String
+  inventory   Inventory      @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+  type        AdjustmentType
+  quantity    Int
+  reason      String?
+  userId      String
+  createdAt   DateTime       @default(now())
+}
+
+// ---- SALES / POS ----
+enum PaymentMethod {
+  EFECTIVO
+  TARJETA
+  TRANSFERENCIA
+  CREDITO
+  MIXTO
+}
+
+enum SaleStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+model Sale {
+  id            String       @id @default(cuid())
+  folio         String       @unique
+  branchId      String
+  branch        Branch       @relation(fields: [branchId], references: [id])
+  userId        String
+  user          User         @relation(fields: [userId], references: [id])
+  clientId      String?
+  client        Client?      @relation(fields: [clientId], references: [id])
+  subtotal      Float
+  taxRate       Float        @default(0.16)
+  tax           Float
+  discount      Float        @default(0)
+  total         Float
+  paymentMethod PaymentMethod
+  cashReceived  Float?
+  change        Float?
+  status        SaleStatus   @default(COMPLETED)
+  notes         String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  items SaleItem[]
+  cfdi  CFDI?
+}
+
+model SaleItem {
+  id        String  @id @default(cuid())
+  saleId    String
+  sale      Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  quantity  Int
+  unitPrice Float
+  discount  Float   @default(0)
+  taxRate   Float   @default(0.16)
+  total     Float
+}
+
+// ---- CLIENTS & CREDIT ----
+enum ClientType {
+  GENERAL
+  MAYORISTA
+  VIP
+  EMPRESARIAL
+}
+
+model Client {
+  id          String     @id @default(cuid())
+  name        String
+  email       String?
+  phone       String?
+  rfc         String?
+  address     String?
+  type        ClientType @default(GENERAL)
+  creditLimit Float      @default(0)
+  creditUsed  Float      @default(0)
+  points      Int        @default(0)
+  active      Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  sales          Sale[]
+  pointsHistory  PointsTransaction[]
+}
+
+enum PointsType {
+  EARNED
+  REDEEMED
+  EXPIRED
+  ADJUSTED
+}
+
+model PointsTransaction {
+  id        String     @id @default(cuid())
+  clientId  String
+  client    Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  points    Int
+  type      PointsType
+  saleId    String?
+  description String?
+  createdAt DateTime   @default(now())
+}
+
+// ---- CFDI 4.0 ----
+enum CFDIType {
+  INGRESO
+  EGRESO
+  TRASLADO
+  NOMINA
+  PAGO
+}
+
+enum CFDIStatus {
+  GENERATED
+  STAMPED
+  CANCELLED
+}
+
+model CFDI {
+  id            String    @id @default(cuid())
+  uuid          String    @unique
+  saleId        String?   @unique
+  sale          Sale?     @relation(fields: [saleId], references: [id])
+  clientRfc     String
+  clientName    String
+  cfdiType      CFDIType
+  paymentForm   String
+  paymentMethod String
+  useCFDI       String
+  subtotal      Float
+  tax           Float
+  total         Float
+  status        CFDIStatus @default(GENERATED)
+  xmlContent    String?
+  pdfUrl        String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+}
+
+// ---- OPERATIONAL EXPENSES ----
+enum ExpenseCategory {
+  ALQUILER
+  SERVICIOS
+  SUELDOS
+  MANTENIMIENTO
+  PUBLICIDAD
+  TRANSPORTE
+  OTROS
+}
+
+model Expense {
+  id          String          @id @default(cuid())
+  category    ExpenseCategory
+  description String
+  amount      Float
+  date        DateTime
+  branchId    String?
+  branch      Branch?         @relation(fields: [branchId], references: [id])
+  userId      String
+  user        User             @relation(fields: [userId], references: [id])
+  isRecurring Boolean         @default(false)
+  receiptUrl  String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+}
+
+// ---- AUDIT LOGS ----
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  action    String
+  entity    String
+  entityId  String?
+  details   String?
+  ipAddress String?
+  createdAt DateTime @default(now())
+}
+
+// ---- DYNAMIC PRICING ----
+enum PriceRuleType {
+  PERCENTAGE_DISCOUNT
+  FIXED_DISCOUNT
+  MARGIN_MINIMUM
+}
+
+model PriceRule {
+  id         String        @id @default(cuid())
+  name       String
+  type       PriceRuleType
+  value      Float
+  productId  String?
+  categoryId String?
+  startDate  DateTime?
+  endDate    DateTime?
+  active     Boolean       @default(true)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+}
+
+// ---- DASHBOARD STATS (materialized) ----
+model DailyStat {
+  id        String   @id @default(cuid())
+  date      DateTime
+  branchId  String
+  totalSales    Float @default(0)
+  totalExpenses Float @default(0)
+  numTransactions Int @default(0)
+  avgTicket  Float   @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([date, branchId])
+}
